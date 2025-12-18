@@ -148,6 +148,8 @@ struct Abc_Obj_t_     // 48/72 bytes (32-bits/64-bits)
       Abc_Obj_t *     pCopy;         // the copy of this object
       int             iTemp;
       float           dTemp; };
+
+    unsigned          fCorrect:  1;  // marks the node is correct
 };
 
 struct Abc_Ntk_t_ 
@@ -561,6 +563,7 @@ extern ABC_DLL Abc_Obj_t *        Abc_AigXor( Abc_Aig_t * pMan, Abc_Obj_t * p0, 
 extern ABC_DLL Abc_Obj_t *        Abc_AigMux( Abc_Aig_t * pMan, Abc_Obj_t * pC, Abc_Obj_t * p1, Abc_Obj_t * p0 );
 extern ABC_DLL Abc_Obj_t *        Abc_AigMiter( Abc_Aig_t * pMan, Vec_Ptr_t * vPairs, int fImplic );
 extern ABC_DLL int                Abc_AigReplace( Abc_Aig_t * pMan, Abc_Obj_t * pOld, Abc_Obj_t * pNew, int  fUpdateLevel );
+extern ABC_DLL void               Abc_AigUpdateLevel_Trigger( Abc_Aig_t * pMan, Abc_Obj_t * pNode, int NEWNODEID );
 extern ABC_DLL void               Abc_AigDeleteNode( Abc_Aig_t * pMan, Abc_Obj_t * pOld );
 extern ABC_DLL void               Abc_AigRehash( Abc_Aig_t * pMan );
 extern ABC_DLL int                Abc_AigNodeHasComplFanoutEdge( Abc_Obj_t * pNode );

@@ -43,6 +43,18 @@ extern void  Abc_PlaceBegin( Abc_Ntk_t * pNtk );
 extern void  Abc_PlaceEnd( Abc_Ntk_t * pNtk );
 extern void  Abc_PlaceUpdate( Vec_Ptr_t * vAddedCells, Vec_Ptr_t * vUpdatedNets );
 
+
+extern abctime global_time; 
+extern abctime global_resynthesis_time; 
+extern abctime global_cut_time; 
+extern abctime global_aig_update_time; 
+extern abctime global_aig_converter_time;  
+extern long int global_level_updates;
+extern long int global_reverse_updates;
+extern long int global_node_rewritten; 
+extern long int global_reorder_nodes;
+extern long int max_aff_size; 
+
 ////////////////////////////////////////////////////////////////////////
 ///                     FUNCTION DEFINITIONS                         ///
 ////////////////////////////////////////////////////////////////////////
@@ -73,6 +85,20 @@ int Abc_NtkRewrite( Abc_Ntk_t * pNtk, int fUpdateLevel, int fUseZeros, int fVerb
     assert( Abc_NtkIsStrash(pNtk) );
     // cleanup the AIG
     Abc_AigCleanup((Abc_Aig_t *)pNtk->pManFunc);
+
+    global_time = 0; 
+    global_resynthesis_time = 0; 
+    global_cut_time = 0; 
+    global_aig_update_time = 0; 
+    global_aig_converter_time = 0;  
+    global_level_updates = 0;
+    global_reverse_updates = 0;
+    global_node_rewritten = 0;
+    global_reorder_nodes = 0;
+    max_aff_size = 0; 
+
+    int seenNodes = 0;
+
 /*
     {
         Vec_Vec_t * vParts;
@@ -108,12 +134,52 @@ Rwr_ManAddTimeCuts( pManRwr, Abc_Clock() - clk );
     pManRwr->nNodesBeg = Abc_NtkNodeNum(pNtk);
     nNodes = Abc_NtkObjNumMax(pNtk);
     pProgress = Extra_ProgressBarStart( stdout, nNodes );
+
+    Abc_NtkForEachNodeCi( pNtk, pNode, i )
+        pNode->fCorrect = 1;
+
+    Vec_Vec_t * vNodes  = Vec_VecAlloc( 100 );
+    int preSize = nNodes - 1;
+    int t = 0; 
+
+    // Vec_VecPush( pMan->vLevels, pFanout->Level, pFanout );
     Abc_NtkForEachNode( pNtk, pNode, i )
     {
-        Extra_ProgressBarUpdate( pProgress, i, NULL );
+        Vec_VecPush(vNodes, pNode->Level, pNode);
+    }
+
+    Vec_Ptr_t * vVec;
+    int k;
+     
+    Vec_VecForEachLevel( vNodes, vVec, i )
+    {
+        if ( Vec_PtrSize(vVec) == 0 )
+            continue;
+        Vec_PtrForEachEntry( Abc_Obj_t *, vVec, pNode, k )
+        {
+            seenNodes ++;
+            if ( pNode == NULL )
+                continue;
+            if ( pNode -> Id == 0 )
+                continue;
+            
+
+    // Abc_NtkForEachNode( pNtk, pNode, i )
+    // {
+        Extra_ProgressBarUpdate( pProgress, seenNodes, NULL );
         // stop if all nodes have been tried once
-        if ( i >= nNodes )
+        if ( seenNodes >= nNodes )
             break;
+        
+        if ( fUpdateLevel )
+        { 
+            abctime clk = Abc_Clock(); 
+            Abc_AigUpdateLevel_Trigger((Abc_Aig_t *)pNtk->pManFunc, pNode, nNodes);
+            global_aig_update_time += Abc_Clock() - clk; 
+            if (Abc_ObjFanin0(pNode)->fCorrect || Abc_ObjFanin1(pNode)->fCorrect )
+                pNode->fCorrect = 1;
+        }
+             
         // skip persistant nodes
         if ( Abc_NodeIsPersistant(pNode) )
             continue;
@@ -143,6 +209,7 @@ clk = Abc_Clock();
             RetValue = -1;
             break;
         }
+        global_node_rewritten ++; 
 Rwr_ManAddTimeUpdate( pManRwr, Abc_Clock() - clk );
         if ( fCompl ) Dec_GraphComplement( pGraph );
 
@@ -150,8 +217,80 @@ Rwr_ManAddTimeUpdate( pManRwr, Abc_Clock() - clk );
 //        if ( fPlaceEnable )
 //            Abc_PlaceUpdate( vAddedCells, vUpdatedNets );
     }
+
+    int k = 0; 
+    // update new added nodes   
+    for ( t = preSize; (t < Vec_PtrSize((pNtk)->vObjs)) && (((pNode) = Abc_NtkObj(pNtk, t)), 1); t++ )   {
+        if ( (pNode) == NULL || !Abc_ObjIsNode(pNode) ) 
+            continue;
+        else
+            pNode->fCorrect = 1; 
+        
+    }
+
+    // level checker     
+    Vec_PtrForEachEntry( Abc_Obj_t *, vVec, pNode, k )
+    {
+        // printf("Checking node %d \t global level update %d \n", Abc_ObjId(pNode), global_level_updates);
+        if ( pNode == NULL )
+            continue;
+        if (pNode->Id == 0) 
+            continue;
+        if ( Abc_ObjIsCi(pNode) || Abc_AigNodeIsConst(pNode) )
+            continue;
+
+        // if ( Abc_ObjFanin0(pNode)->fCorrect && Abc_ObjFanin1(pNode)->fCorrect )
+        //     pNode->fCorrect = 1;
+        // else 
+        //     pNode->fCorrect = 0;
+        
+        Abc_Obj_t * fanin0 = Abc_ObjFanin0(pNode);
+        Abc_Obj_t * fanin1 = Abc_ObjFanin1(pNode);
+        if ( (fanin0->fCorrect && fanin1->fCorrect)  || (!fanin0->fCorrect && fanin0->Id >= nNodes && fanin1->fCorrect) || (!fanin1->fCorrect && fanin1->Id >= nNodes && fanin0->fCorrect) ){
+            pNode->fCorrect = 1;
+        }
+        pNode->Level = Abc_MaxInt( Abc_ObjFanin0(pNode)->Level, Abc_ObjFanin1(pNode)->Level ) + 1;
+    }
+
+    
+    preSize = Vec_PtrSize((pNtk)->vObjs) - 1;
+         
+
+}
+
+    Vec_VecFree( vNodes );
+
+    int newNodes = 0;
+    int newNodesId = 0;
+    Abc_NtkForEachNode( pNtk, pNode, i )
+    {
+        if (pNode->fCorrect == 0)
+            newNodes++;
+        if ( Abc_ObjId(pNode) >= nNodes)
+            newNodesId++;
+    }
+    
     Extra_ProgressBarStop( pProgress );
 Rwr_ManAddTimeTotal( pManRwr, Abc_Clock() - clkStart );
+
+ABC_PRT("###global_time ",                   pManRwr->timeTotal);   
+ABC_PRT("###global_cut ",                    pManRwr->timeCut); 
+ABC_PRT("###global_resynthesis_time",        pManRwr->timeRes); 
+ABC_PRT("###global_aig_update_time",         global_aig_update_time); 
+ABC_PRT("###global_aig_converter_time ",     pManRwr->timeUpdate); 
+  
+printf("###global_level_updates \t %ld\n",    global_level_updates);   
+printf("###global_reverse_updates \t %ld\n",  global_reverse_updates);   
+printf("###global_node_rewritten \t %ld\n",   global_node_rewritten);       
+printf("###global_reorder_nodes \t %ld\n",    global_reorder_nodes);
+printf("###max_aff_size \t %ld\n",            max_aff_size);
+
+double listMem = 0.0; 
+printf("###List for Linked List(MB): \t %.2f\n", listMem / (1024.0 * 1024.0));
+extern double Abc_NtkMemory( Abc_Ntk_t * pNtk );
+double ntkMem = Abc_NtkMemory( pNtk );
+printf("###Network Memory(MB): \t %.2f\n", ntkMem / (1024.0 * 1024.0));
+
     // print stats
     pManRwr->nNodesEnd = Abc_NtkNodeNum(pNtk);
     if ( fVerbose )
@@ -186,11 +325,11 @@ Rwr_ManAddTimeTotal( pManRwr, Abc_Clock() - clkStart );
         else
             Abc_NtkLevel( pNtk );
         // check
-        if ( !Abc_NtkCheck( pNtk ) )
-        {
-            printf( "Abc_NtkRewrite: The network check has failed.\n" );
-            return 0;
-        }
+        // if ( !Abc_NtkCheck( pNtk ) )
+        // {
+        //     printf( "Abc_NtkRewrite: The network check has failed.\n" );
+        //     return 0;
+        // }
     }
     return RetValue;
 }

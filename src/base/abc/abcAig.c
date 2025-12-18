@@ -22,6 +22,20 @@
 
 ABC_NAMESPACE_IMPL_START
 
+abctime global_update_time = 0;         // do not use 
+// abctime global_traverse_time = 0; 
+abctime global_time = 0; 
+abctime global_resynthesis_time = 0; 
+abctime global_cut_time = 0; 
+abctime global_aig_update_time = 0;     // maintain order, level /reverse level computation 
+abctime global_aig_converter_time = 0;      
+long int global_level_updates = 0;
+long int global_reverse_updates = 0;
+long int global_node_rewritten = 0; 
+long int global_reorder_nodes = 0;
+long int max_aff_size = 0; 
+ 
+
 /*
     AIG is an And-Inv Graph with structural hashing.
     It is always structurally hashed. It means that at any time:
@@ -63,6 +77,8 @@ struct Abc_Aig_t_
     Vec_Vec_t *       vLevelsR;          // the nodes to be updated
     Vec_Ptr_t *       vAddedCells;       // the added nodes
     Vec_Ptr_t *       vUpdatedNets;      // the nodes whose fanouts have changed
+
+    Vec_Ptr_t *       vVisited;           // the temporary array for visiting nodes in DFS 
 
     int               nStrash0;
     int               nStrash1;
@@ -140,6 +156,7 @@ Abc_Aig_t * Abc_AigAlloc( Abc_Ntk_t * pNtkAig )
     pMan->vLevelsR = Vec_VecAlloc( 100 );
     pMan->vStackReplaceOld = Vec_PtrAlloc( 100 );
     pMan->vStackReplaceNew = Vec_PtrAlloc( 100 );
+    pMan->vVisited = Vec_PtrAlloc( 100 );
     // create the constant node
     assert( pNtkAig->vObjs->nSize == 0 );
     pMan->pConst1 = Abc_NtkCreateObj( pNtkAig, ABC_OBJ_NODE );
@@ -176,6 +193,7 @@ void Abc_AigFree( Abc_Aig_t * pMan )
     Vec_PtrFree( pMan->vStackReplaceOld );
     Vec_PtrFree( pMan->vStackReplaceNew );
     Vec_PtrFree( pMan->vNodes );
+    Vec_PtrFree( pMan->vVisited );
     ABC_FREE( pMan->pBins );
     ABC_FREE( pMan );
 }
@@ -866,9 +884,12 @@ int Abc_AigReplace( Abc_Aig_t * pMan, Abc_Obj_t * pOld, Abc_Obj_t * pNew, int fU
     }
     if ( fUpdateLevel )
     {
-        Abc_AigUpdateLevel_int( pMan );
+        // Abc_AigUpdateLevel_int( pMan );
+        abctime clk = Abc_Clock();
         if ( pMan->pNtkAig->vLevelsR ) 
             Abc_AigUpdateLevelR_int( pMan );
+        
+        global_aig_update_time += Abc_Clock() - clk;
     }
     return 1;
 }
@@ -937,7 +958,9 @@ void Abc_AigReplace_int( Abc_Aig_t * pMan, Abc_Obj_t * pOld, Abc_Obj_t * pNew, i
 
         // if the node is in the level structure, remove it
         if ( pFanout->fMarkA )
-            Abc_AigRemoveFromLevelStructure( pMan->vLevels, pFanout );
+            pFanout->fMarkA = 0;
+            // Abc_AigRemoveFromLevelStructure( pMan->vLevels, pFanout );
+
         // if the node is in the level structure, remove it
         if ( pFanout->fMarkB )
             Abc_AigRemoveFromLevelStructureR( pMan->vLevelsR, pFanout );
@@ -954,8 +977,8 @@ void Abc_AigReplace_int( Abc_Aig_t * pMan, Abc_Obj_t * pOld, Abc_Obj_t * pNew, i
         {
             // schedule the updated fanout for updating direct level
             assert( pFanout->fMarkA == 0 );
-            pFanout->fMarkA = 1;
-            Vec_VecPush( pMan->vLevels, pFanout->Level, pFanout );
+            // pFanout->fMarkA = 1;
+            // Vec_VecPush( pMan->vLevels, pFanout->Level, pFanout );
             // schedule the updated fanout for updating reverse level
             if ( pMan->pNtkAig->vLevelsR ) 
             {
@@ -1143,9 +1166,12 @@ void Abc_AigUpdateLevelR_int( Abc_Aig_t * pMan )
                     continue;
                 // get the new reverse level of this fanin
                 LevelNew = 0;
-                Abc_ObjForEachFanout( pFanin, pFanout, j )
+                Abc_ObjForEachFanout( pFanin, pFanout, j ){
+                    global_reverse_updates ++; 
                     if ( LevelNew < Abc_ObjReverseLevel(pFanout) )
-                        LevelNew = Abc_ObjReverseLevel(pFanout);
+                    LevelNew = Abc_ObjReverseLevel(pFanout);
+                }
+                    
                 LevelNew += 1;
                 assert( LevelNew > i );
                 if ( Abc_ObjReverseLevel(pFanin) == LevelNew ) // no change
@@ -1223,7 +1249,70 @@ void Abc_AigRemoveFromLevelStructureR( Vec_Vec_t * vStruct, Abc_Obj_t * pNode )
     pNode->fMarkB = 0;
 }
 
+int Abc_AigUpdateLevel_Rec(Abc_Aig_t * pMan, Abc_Obj_t * pObj )
+{
+    
+    if ( pObj->fCorrect )
+        return pObj->Level;
 
+    if ( Abc_ObjIsCi(pObj) || Abc_AigNodeIsConst(pObj) )
+        return pObj->Level;
+
+    if (pObj -> fMarkC)
+        return pObj->Level; 
+
+    Abc_Obj_t * pFanin0 = Abc_ObjFanin0(pObj);
+    Abc_Obj_t * pFanin1 = Abc_ObjFanin1(pObj);
+
+    int level0 = Abc_AigUpdateLevel_Rec(pMan, pFanin0);
+    pFanin0->fMarkC = 1;
+    Vec_PtrPush( pMan->vVisited, pFanin0);
+     
+    int level1 = Abc_AigUpdateLevel_Rec(pMan, pFanin1);
+    pFanin1->fMarkC = 1;
+    Vec_PtrPush( pMan->vVisited, pFanin1);
+    
+    global_level_updates += 2; 
+
+    pObj->Level = 1 + Abc_MaxInt( level0, level1 );
+ 
+    return pObj->Level;
+}
+
+void Abc_AigUpdateLevel_Trigger( Abc_Aig_t * pMan, Abc_Obj_t * pNode, int NEWNODEID) { 
+    if (pNode == NULL)
+        return;
+    if (pNode -> Id == 0 )
+        return;
+    if ( Abc_ObjIsCi(pNode) || Abc_AigNodeIsConst(pNode) )
+        return;
+    Abc_Obj_t * fanin0 = Abc_ObjFanin0(pNode);
+    Abc_Obj_t * fanin1 = Abc_ObjFanin1(pNode);
+    if ( (fanin0->fCorrect && fanin1->fCorrect)  || (!fanin0->fCorrect && fanin0->Id >= NEWNODEID && fanin1->fCorrect) || (!fanin1->fCorrect && fanin1->Id >= NEWNODEID && fanin0->fCorrect) ){
+        pNode->Level = 1 + Abc_MaxInt( fanin0->Level, fanin1->Level );
+        pNode->fCorrect = 1;
+        global_level_updates += 2; 
+    } 
+    else
+    {
+        int lvl0 = fanin0->fCorrect ? fanin0->Level : Abc_AigUpdateLevel_Rec( pMan, fanin0 );
+        int lvl1 = fanin1->fCorrect ? fanin1->Level : Abc_AigUpdateLevel_Rec( pMan, fanin1 );
+        
+        pNode->Level = 1 + Abc_MaxInt( lvl0, lvl1 );
+        // clear the marks
+        Abc_Obj_t * pObj;
+        int i;
+        Vec_PtrForEachEntry( Abc_Obj_t *, pMan->vVisited, pObj, i )
+            pObj->fMarkC = 0;
+        if (pMan->vVisited->nSize > 0 && pNode->Id < 800)
+            printf("Node Id %d, Visited Size: %d\n", pNode->Id, pMan->vVisited->nSize);
+        Vec_PtrErase(pMan->vVisited);
+    }
+         
+    return; 
+}
+
+ 
 
 
 /**Function*************************************************************
