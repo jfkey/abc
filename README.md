@@ -2,6 +2,32 @@
 [![.github/workflows/build-windows.yml](https://github.com/berkeley-abc/abc/actions/workflows/build-windows.yml/badge.svg)](https://github.com/berkeley-abc/abc/actions/workflows/build-windows.yml)
 [![.github/workflows/build-posix-cmake.yml](https://github.com/berkeley-abc/abc/actions/workflows/build-posix-cmake.yml/badge.svg)](https://github.com/berkeley-abc/abc/actions/workflows/build-posix-cmake.yml)
 
+
+This is a fork of [Berkeley ABC](https://github.com/berkeley-abc/abc) that integrating **boundLM**, a bounded dynamic level maintenance algorithm designed for efficient logic optimization.
+
+This implementation corresponds to the paper:
+> **Bounded Dynamic Level Maintenance for Efficient Logic Optimization**  
+> *IEEE Transactions on Computers (TC), 2025. Under Review*
+
+## Overview
+
+**boundLM** addresses the efficiency bottleneck in level-constrained logic optimization (e.g., `rewrite`, `refactor`). Unlike traditional methods that suffer from $O(|V|^2)$ worst-case complexity, boundLM achieves **subquadratic time updates** ($O(|V|\Delta \log \Delta)$) by maintaining a **partial topological order**.
+
+### Key Features
+*   **Bounded Updates:** Level updates are strictly bounded by the size of the local change ($\Delta G$), not the entire graph size.
+*   **High Performance:** Achieves ~1000x speedup in level maintenance and ~6.4x overall speedup in synthesis flows compared to the baseline.
+*   **Seamless Integration:** Integrated into standard ABC commands.
+
+## Installation
+
+The build process is identical to the original ABC.
+
+```bash
+git clone https://github.com/jfkey/abc_level_update.git
+```
+
+
+
 # ABC: System for Sequential Logic Synthesis and Formal Verification
 
 ABC is always changing but the current snapshot is believed to be stable.
